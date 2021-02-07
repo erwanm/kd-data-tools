@@ -86,4 +86,4 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-mv "$targetdir"/*.cuis "$targetdir"
+mv "$nbDir"/*.cuis "$targetdir"
