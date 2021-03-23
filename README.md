@@ -18,6 +18,15 @@ Despite all these issues, to the best of my (limited) knowledge there is no othe
 
 The code is written in Perl and C++. It requires the Perl module `GetOpt::Std` (possibly also `Carp` but I think it's standard), and a recent enough C++ compiler (you're probably fine).
 
+### Compilation
+
+In the `bin` directory: 
+
+```
+g++ -std=c++11 -Wfatal-errors -o disambiguation-for-KD-output disambiguation-for-KD-output.cpp
+```
+
+
 ## Data
 
 The input data is made of the output described [here](https://github.com/erwanm/knowledgediscovery).
@@ -56,6 +65,8 @@ squashfuse ../knowledgediscovery/mined.sqsh /tmp/mined
 ls /tmp/mined/mined.unfiltered-medline/abstracts/* | grep -v '.out$' | bin/discard-non-latest-pmid-versions.pl non-latest-pmid-versions.tsv unfiltered-medline.deduplicated
 ```
 
+Estimated duration: 1h.
+
 ### abstracts+articles
 
 Note: this process applies only to the Medline abstracts part of the data.
@@ -63,11 +74,172 @@ Note: this process applies only to the Medline abstracts part of the data.
 ```
 ls /tmp/mined/mined.abstracts+articles/abstracts/* | grep -v '.out$' | bin/discard-non-latest-pmid-versions.pl non-latest-pmid-versions.tsv abstracts+articles.deduplicated
 ```
+Estimated duration: 1h.
+
 
 ### mesh-descriptors-by-pmid
 
 ```
 echo mesh-descriptors-by-pmid.tsv | ../kd-data-tools/bin/discard-non-latest-pmid-versions.pl -c 3 non-latest-pmid-versions.tsv output
 mv output/mesh-descriptors-by-pmid.tsv mesh-descriptors-by-pmid.deduplicated.tsv
+```
+
+# Generating resources for the disambiguation process
+
+## Converted Mesh descriptors
+
+```
+bin/convert-mesh-to-cui.pl -k -l ',' -M  -m cuis  UMLS-2020AB/META/ mesh-descriptors-by-pmid.deduplicated.tsv 5 | cut -f 1-4,6 > mesh-descriptors-by-pmid.deduplicated.cuis.tsv
+```
+Estimated duration: 20 mn.
+
+
+```
+bin/convert-mesh-to-cui.pl -k -l ',' -M  -m mesh  UMLS-2020AB/META/ mesh-descriptors-by-pmid.deduplicated.tsv 5 | cut -f 1-4,6 > mesh-descriptors-by-pmid.deduplicated.mesh.tsv
+```
+Estimated duration: 20 mn.
+
+
+## Non-ambiguous "pairs data"
+
+### Non-ambiguous "pairs data" with converted Mesh descriptors
+
+
+The resulting dataset represents the 'pairs data' based on only the non-ambiguous concepts, with the addition of converted Mesh descriptors.
+
+**Important: the next step requires at least 32 G memory** (run with more if you can).
+
+
+```
+build-doc-concept-matrix.pl -r ../knowledgediscovery/umlsWordlist.WithIDs.txt -o -d 1 -m -e mesh-descriptors-by-pmid.deduplicated.mesh.tsv:1:5:, -u /tmp/mined/mined.abstracts+articles/ doc-cui-matrix.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv
+```
+
+Estimated duration: 3.5 hours.
+
+
+
+**Important: the next step requires  250 G memory.**
+
+Note: the `-n` option is used to avoid the unnecessary sorting step. The process requires 18 hours with this option but 24 hours without.
+
+
+```
+calculate-concept-pairs-stats.pl -n doc-cui-matrix.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 3 pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv
+```
+
+
+# Disambiguation
+
+TODO HERE
+
+From [[2020-09-20 Cascading disambiguation unfiltered abstracts]], coded new script to wrap up the process, see [[2021-02-03 Disamb process]].
+
+!! Preparation
+
+
+!!! Directory structure
+
+The process expects the whole deduplicated data to be present in a directory `mined` containing the following structure:
+
+* unfiltered-medline
+** deduplicated
+* abstracts+articles
+** deduplicated
+*** abstracts
+*** articles
+
+Note that:
+
+* `unfiltered-medline/deduplicated` and `abstracts+articles/deduplicated/abstracts` are obtained from the deduplication step above
+** These directories do not contain `.out` files
+* `abstracts+articles/deduplicated/articles` is obtained directly from the KD mining process
+
+
+The `abstracts+articles/deduplicated/articles` directory may contain huge `.out` files which can be removed: 
+
+```
+rm -f abstracts+articles/deduplicated/articles/*.out
+```
+
+Based on the 2021 data, deleting these files saves more than 200 GB. The whole `mined` directory occupies close to 377 GB. At the end of the process it will use around 700GB ''TODO''.
+
+```
+> du -hs mined/
+377G    mined/
+```
+
+The following script checks that the directory layout is valid, creates output directories for the disambiguated data and creates the symlinks to `.raw` and `.tok` files in the output directories:
+
+```
+prepare-full-kd-data-layout.sh mined/
+```
+
+!!! Splitting data for parallel processing
+
+* The disambiguation process requires 250G memory (for every process of course!)
+* The disambiguation process requires reading the "pairs data" which takes a long time (4 to 6 hours). This is done only once for all the input files, so there's a trade off:
+** if many input files are processed sequentially, the whole process is very long
+** if the processes are run in parallel but for few files every time, then a lot of computation time is wated on loading the pairs data every time.
+* Note: the first couple hundreds of abstracts files are very light, they take less time to process than regular files.
+
+```
+> ls mined/unfiltered-medline/deduplicated/*cuis | split -l 320 -d - um
+> wc -l um0*
+  320 um00
+  320 um01
+  320 um02
+  293 um03
+ 1253 total
+> ls mined/abstracts+articles/deduplicated/abstracts/*cuis | split -l 300 -d - aa.abs
+> wc -l aa.abs0*
+  300 aa.abs00
+  300 aa.abs01
+  300 aa.abs02
+  247 aa.abs03
+ 1147 total
+> ls mined/abstracts+articles/deduplicated/articles/*cuis | split -l 451 -d - aa.art
+> wc -l aa.art0*
+   451 aa.art00
+   451 aa.art01
+   451 aa.art02
+   450 aa.art03
+  1803 total
+```
+
+!! Main process
+
+''Requires 250 G memory''
+
+!!! Init node
+
+```
+salloc --mem 250G -p long
+```
+
+Requires access to several data resources:
+
+```
+mkdir /tmp/data
+squashfuse data-for-disamb-etc.sqsh /tmp/data
+```
+
+!!! Run a process for `unfiltered-medline`
+
+```
+f=um00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/unfiltered-medline/deduplicated.disambiguated/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
+```
+
+Then same for all the subtasks: `um01`, `um02`,`um03`.
+
+!!! Run a process for `abstracts+articles/abstracts`
+
+```
+f=aa.abs00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/abstracts+articles/deduplicated.disambiguated/abstracts/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
+```
+
+!!! Run a process for `abstracts+articles/articles`
+
+```
+f=aa.art00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/abstracts+articles/deduplicated.disambiguated/articles/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
 ```
 
