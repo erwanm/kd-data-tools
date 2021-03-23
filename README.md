@@ -33,7 +33,7 @@ The input data is made of the output described [here](https://github.com/erwanm/
 
 For the sake of simplicity the commands below assume that the input files/directories are present in the current directory. The path can be adjusted to your setup everywhere, of course.
 
-# Deduplication
+# I. Deduplication
 
 This step removes a few Medline abstracts for which there are several versions in the data. There are very few such cases it's recommended to remove the duplicates, if only to avoid multiple occurrences of the same PMID.
 
@@ -84,7 +84,7 @@ echo mesh-descriptors-by-pmid.tsv | ../kd-data-tools/bin/discard-non-latest-pmid
 mv output/mesh-descriptors-by-pmid.tsv mesh-descriptors-by-pmid.deduplicated.tsv
 ```
 
-# Generating resources for the disambiguation process
+# II. Generating resources for the disambiguation process
 
 ## Converted Mesh descriptors
 
@@ -128,7 +128,7 @@ calculate-concept-pairs-stats.pl -n doc-cui-matrix.abstracts+articles.by-paper.u
 ```
 
 
-# Disambiguation
+# III. Disambiguation
 
 TODO HERE
 
