@@ -1,6 +1,6 @@
 # Overview
 
-This repository contains some miscellaneous tools for manipulating the "KD data", which is obtained as [the output of my fork](https://github.com/erwanm/knowledgediscovery) of [Jake Lever's knowledgediscovery (KD)](https://github.com/jakelever/knowledgediscovery) system. This KD data contains the full content of Medline and PMC as parsed by the aforementioned system and stored using the ["Tabular Doc-Concept" (TDC) format](https://github.com/erwanm/knowledgediscovery#format-of-the-output-files). The most important tool in this repository is an **ad-hoc concept disambiguation system for the KD data** (described in the last section below).  
+This repository contains some miscellaneous tools for manipulating the "KD data", which is obtained as [the output of my fork](https://github.com/erwanm/knowledgediscovery) of [Jake Lever's knowledgediscovery (KD)](https://github.com/jakelever/knowledgediscovery) system. This KD data contains the full content of Medline and PMC as parsed by the aforementioned system and stored using the ["Tabular Doc-Concept" (TDC) format](https://github.com/erwanm/knowledgediscovery#format-of-the-output-files). The most important tool in this repository is an **ad-hoc concept disambiguation system for the KD data** (usage described in the last section below).  
 
 **CAUTION!** The disambiguation system is a prototype which:
 
@@ -130,29 +130,26 @@ calculate-concept-pairs-stats.pl -n doc-cui-matrix.abstracts+articles.by-paper.u
 
 # III. Disambiguation
 
-TODO HERE
 
-From [[2020-09-20 Cascading disambiguation unfiltered abstracts]], coded new script to wrap up the process, see [[2021-02-03 Disamb process]].
-
-!! Preparation
+## Preparation
 
 
-!!! Directory structure
+### Directory structure
 
 The process expects the whole deduplicated data to be present in a directory `mined` containing the following structure:
 
-* unfiltered-medline
-** deduplicated
-* abstracts+articles
-** deduplicated
-*** abstracts
-*** articles
+- unfiltered-medline
+  - deduplicated
+- abstracts+articles
+  - deduplicated
+    - abstracts
+    - articles
 
-Note that:
+Notes:
 
-* `unfiltered-medline/deduplicated` and `abstracts+articles/deduplicated/abstracts` are obtained from the deduplication step above
-** These directories do not contain `.out` files
-* `abstracts+articles/deduplicated/articles` is obtained directly from the KD mining process
+- `unfiltered-medline/deduplicated` and `abstracts+articles/deduplicated/abstracts` are obtained from the deduplication step above
+  - These directories do not contain `.out` files
+- `abstracts+articles/deduplicated/articles` is obtained directly from the KD mining process
 
 
 The `abstracts+articles/deduplicated/articles` directory may contain huge `.out` files which can be removed: 
@@ -161,12 +158,7 @@ The `abstracts+articles/deduplicated/articles` directory may contain huge `.out`
 rm -f abstracts+articles/deduplicated/articles/*.out
 ```
 
-Based on the 2021 data, deleting these files saves more than 200 GB. The whole `mined` directory occupies close to 377 GB. At the end of the process it will use around 700GB ''TODO''.
-
-```
-> du -hs mined/
-377G    mined/
-```
+Based on the 2021 data, deleting these files saves more than 200 GB. The whole `mined` directory occupies close to 380 GB. At the end of the process it will use around 450 GB.
 
 The following script checks that the directory layout is valid, creates output directories for the disambiguated data and creates the symlinks to `.raw` and `.tok` files in the output directories:
 
@@ -174,56 +166,36 @@ The following script checks that the directory layout is valid, creates output d
 prepare-full-kd-data-layout.sh mined/
 ```
 
-!!! Splitting data for parallel processing
+### Splitting data for parallel processing
 
-* The disambiguation process requires 250G memory (for every process of course!)
-* The disambiguation process requires reading the "pairs data" which takes a long time (4 to 6 hours). This is done only once for all the input files, so there's a trade off:
-** if many input files are processed sequentially, the whole process is very long
-** if the processes are run in parallel but for few files every time, then a lot of computation time is wated on loading the pairs data every time.
-* Note: the first couple hundreds of abstracts files are very light, they take less time to process than regular files.
 
-```
-> ls mined/unfiltered-medline/deduplicated/*cuis | split -l 320 -d - um
-> wc -l um0*
-  320 um00
-  320 um01
-  320 um02
-  293 um03
- 1253 total
-> ls mined/abstracts+articles/deduplicated/abstracts/*cuis | split -l 300 -d - aa.abs
-> wc -l aa.abs0*
-  300 aa.abs00
-  300 aa.abs01
-  300 aa.abs02
-  247 aa.abs03
- 1147 total
-> ls mined/abstracts+articles/deduplicated/articles/*cuis | split -l 451 -d - aa.art
-> wc -l aa.art0*
-   451 aa.art00
-   451 aa.art01
-   451 aa.art02
-   450 aa.art03
-  1803 total
-```
+- The disambiguation process requires 250G memory (for every process of course!)
+- The disambiguation process requires reading the "pairs data" which takes a long time (4 to 6 hours). This is done only once for all the input files, so there's a trade off:
+  - if many input files are processed sequentially, the whole process is very long
+  - if the processes are run in parallel but for few files every time, then a lot of computation time is wasted on loading the pairs data every time.
+- Note: the first couple hundreds of abstracts files are very light, they take less time to process than regular files.
 
-!! Main process
+The script `run-cascaded-disambiguation.sh` (see below) takes as input a list of input `.cuis` files to process. The input files can be grouped into batches, for examples like this:
 
-''Requires 250 G memory''
-
-!!! Init node
 
 ```
-salloc --mem 250G -p long
+ls mined/unfiltered-medline/deduplicated/*cuis | split -l 320 -d - um
+ls mined/abstracts+articles/deduplicated/abstracts/*cuis | split -l 300 -d - aa.abs
+ls mined/abstracts+articles/deduplicated/articles/*cuis | split -l 451 -d - aa.art
 ```
 
-Requires access to several data resources:
+## Main process
+
+''Caution: requires 250 G memory and a lot of computation time (around 2 months using 3 parallel processes)''
+
+Requires access the data resources computed in step II (see above):
 
 ```
 mkdir /tmp/data
 squashfuse data-for-disamb-etc.sqsh /tmp/data
 ```
 
-!!! Run a process for `unfiltered-medline`
+### Run a process for `unfiltered-medline`
 
 ```
 f=um00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/unfiltered-medline/deduplicated.disambiguated/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
@@ -231,13 +203,13 @@ f=um00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/unfiltered-
 
 Then same for all the subtasks: `um01`, `um02`,`um03`.
 
-!!! Run a process for `abstracts+articles/abstracts`
+### Run a process for `abstracts+articles/abstracts`
 
 ```
 f=aa.abs00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/abstracts+articles/deduplicated.disambiguated/abstracts/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
 ```
 
-!!! Run a process for `abstracts+articles/articles`
+### Run a process for `abstracts+articles/articles`
 
 ```
 f=aa.art00; ../kd-data-tools/bin/run-cascaded-disambiguation.sh $f mined/abstracts+articles/deduplicated.disambiguated/articles/ $f.tmp umlsWordlist.WithIDs.txt /tmp/data/pair-stats.abstracts+articles.by-paper.unambiguous.with-converted-mesh.mesh.tsv 28116370 /tmp/data/mesh-descriptors-by-pmid.deduplicated.mesh.tsv
